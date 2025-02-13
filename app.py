@@ -1,13 +1,51 @@
 import sys
+import time
+
 import cv2
 import numpy as np
-from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QGridLayout, QFrame, QMessageBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QGridLayout, QFrame, QMessageBox ,QLineEdit
 from PyQt5.QtGui import QImage, QPixmap, QFont, QLinearGradient, QColor, QBrush, QPainter
 from PyQt5.QtCore import QTimer, Qt
 from pyfirmata import Arduino
+import sys
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+# Dictionary to track appliance states and timestamps
 
+def find_com_port():
+    if sys.platform.startswith('win'):
+        for i in range(1, 256):
+            port_name = f"COM{i}"
+            try:
+                with open(f"\\\\.\\{port_name}", "r+b") as port:
+                    return port_name
+            except OSError:
+                pass  # Port not found or in use
+    else:
+        print("Unsupported operating system.")
+        return None
+
+    return None
+
+
+
+appliance_states = {
+    0: {"state": False, "last_toggle_time": time.time(), "on_duration": 0},  # Switch 1
+    1: {"state": False, "last_toggle_time": time.time(), "on_duration": 0},  # Switch 2
+    2: {"state": False, "last_toggle_time": time.time(), "on_duration": 0},  # Switch 3
+    3: {"state": False, "last_toggle_time": time.time(), "on_duration": 0},  # Switch 4
+}
 # Initialize Arduino board
-board = Arduino('COM1')  # Update with your Arduino port
+
+board = Arduino(f'{find_com_port()}')  # Update with your Arduino port
+def calculate (n_fan , n_cooler , n_ac , n_light):
+    avg_fan = 0.07
+    avg_cooler = 0.20
+    avg_ac = 1.2
+    avg_light = 0.015
+
+    res = (n_fan*avg_fan)+(n_cooler*avg_cooler)+(n_ac*avg_ac)+(n_light*avg_light)
+    return res
 pins = {
     0: board.get_pin('d:13:o'),  # Point 0.1
     1: board.get_pin('d:12:o'),  # Point 0.2
@@ -22,6 +60,16 @@ net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
 
 cap = cv2.VideoCapture(0)
 
+#to calculate power consumption
+def calculate_ (n_fan , n_cooler , n_ac , n_light):
+    avg_fan = 0.07
+    avg_cooler = 0.20
+    avg_ac = 1.2
+    avg_light = 0.015
+    res = (n_fan*avg_fan)+(n_cooler*avg_cooler)+(n_ac*avg_ac)+(n_light*avg_light)
+    return res
+
+
 # Default corner points (fallback if user doesn't set them)
 DEFAULT_CORNER_POINTS = [(520, 108), (105, 214), (820, 255), (517, 591)]
 
@@ -30,7 +78,112 @@ total_people = 0
 electricity_saved = 0
 automatic_mode = True  # Start in Automatic Mode
 
+class PowerConsumptionApp(QWidget):
+    def __init__(self):
+        super().__init__()
 
+        self.initUI()
+
+    def initUI(self):
+        self.setWindowTitle("Power Consumption Calculator")
+        self.setGeometry(100, 100, 600, 400)
+
+        layout = QGridLayout()
+
+        self.appliance_labels = ["Fans", "Coolers", "ACs", "Light Bulbs"]
+        self.entries = {}
+        self.li = []
+
+        for i, label in enumerate(self.appliance_labels):
+            lbl = QLabel(label)
+            entry = QLineEdit()
+            entry.setPlaceholderText("Enter count")
+            self.entries[label] = entry
+            value = self.entries[label].text()
+            self.li.append(value)
+
+
+            layout.addWidget(lbl, i, 0)
+            layout.addWidget(entry, i, 1)
+            print(self.entries)
+        self.calculate_button = QPushButton("Calculate Consumption")
+        self.calculate_button.clicked.connect(self.calculate_consumption)
+        layout.addWidget(self.calculate_button, len(self.appliance_labels), 0, 1, 2)
+
+        self.result_label = QLabel(" Total Power consumptions.")
+        layout.addWidget(self.result_label, len(self.appliance_labels) + 1, 0, 1, 2)
+
+
+
+        self.next_button = QPushButton("Next")
+        self.next_button.clicked.connect(self.next_)
+        layout.addWidget(self.next_button, len(self.appliance_labels) + 2, 0, 1, 2)
+
+        # Add Matplotlib FigureCanvas for chart display
+        self.figure, self.ax = plt.subplots()
+        self.canvas = FigureCanvas(self.figure)
+        layout.addWidget(self.canvas, len(self.appliance_labels) + 3, 0, 1, 2)
+
+        self.setLayout(layout)
+    def next_(self):
+        global consumption_data
+        consumption = self.consumption_data
+        self.close()
+
+        self.setup = SetupWindow(consumption)
+        self.setup.show()
+    def calculate_consumption(self):
+        try:
+            power_ratings = {"Fans": 60, "Coolers": 200, "ACs": 1500, "Light Bulbs": 10}
+            total_power = 0
+            self.consumption_data = []
+            self.consumption_data_ = []
+            labels = []
+
+            print("Captured Inputs:")  # Debugging line
+
+            for appliance, entry in self.entries.items():
+                text_value = entry.text().strip()  # Remove unnecessary spaces
+                print(f"{appliance}: '{text_value}'")  # Debugging line to print values
+
+                if text_value.isdigit():  # Ensure only valid numbers are used
+                    count = int(text_value)
+                else:
+                    count = 0  # If invalid input, set it to zero
+
+                consumption_ = count * power_ratings[appliance]
+                consumption = count
+                total_power += consumption_
+
+                if count >= 0:  # Only add non-zero values to the chart
+                    self.consumption_data.append(consumption)
+                    self.consumption_data_.append(consumption_)
+                    labels.append(appliance)
+
+            if not labels:  # If all inputs are empty or zero
+                self.result_label.setText("Please enter valid appliance counts.")
+            else:
+                self.result_label.setText(f"Total Hourly Consumption: {total_power} Watts")
+                self.update_chart(labels, self.consumption_data_)
+
+        except Exception as e:
+            self.result_label.setText(f"Error: {str(e)}")
+
+    def update_chart(self, labels, data):
+        self.ax.clear()
+        self.ax.bar(labels, data, color=['blue', 'green', 'red', 'yellow'])
+        self.ax.set_ylabel("Power Consumption (Watts)")
+        self.ax.set_title("Appliance Power Usage")
+        self.canvas.draw()
+
+    def toggle_dark_mode(self):
+        current_style = self.styleSheet()
+        if "background-color" in current_style:
+            self.setStyleSheet("")
+        else:
+            self.setStyleSheet("background-color: #333; color: white;")
+            for entry in self.entries.values():
+                entry.setStyleSheet("background-color: #555; color: white;")
 class GradientBackground(QWidget):
     """Custom widget to draw gradient backgrounds."""
     def __init__(self, color1, color2, parent=None):
@@ -47,10 +200,15 @@ class GradientBackground(QWidget):
 
 
 class SetupWindow(QWidget):
-    def __init__(self):
+    def __init__(self , consumption_data):
         super().__init__()
         self.setWindowTitle("Setup Corner Points")
         self.setGeometry(100, 100, 800, 600)
+        self.consumption_data = consumption_data
+
+        #rate of consumption
+        self.cons_ = calculate(self.consumption_data[0], self.consumption_data[1], self.consumption_data[2], self.consumption_data[3])
+
 
         # Set gradient background
         self.background = GradientBackground(QColor("#f0f8ff"), QColor("#c6e2ff"), self)
@@ -133,20 +291,22 @@ class SetupWindow(QWidget):
                 self.instructions_label.setText("All 4 points set! Click 'Save and Proceed'.")
 
     def save_and_proceed(self):
-        global corner_points
+        global corner_points , cons_
         corner_points = self.corner_points
+        cons_  = self.cons_
         self.close()
-        self.main_window = MainWindow(corner_points)
+
+        self.main_window = MainWindow(corner_points , cons_)
         self.main_window.show()
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, corner_points):
+    def __init__(self, corner_points , cons_):
         super().__init__()
 
         self.setWindowTitle("Smart Room Monitoring")
         self.setGeometry(100, 100, 1200, 800)
-
+        self.cons_ = cons_
         # Set gradient background
         self.background = GradientBackground(QColor("#f0f8ff"), QColor("#c6e2ff"), self)
         self.background.setGeometry(self.rect())
@@ -273,12 +433,22 @@ class MainWindow(QMainWindow):
                 btn.setEnabled(True)  # Enable manual buttons
 
     def toggle_manual_switch(self, switch_id):
+        global appliance_states
         current_state = pins[switch_id].read()
-        pins[switch_id].write(1 if current_state == 0 else 0)
-        self.switch_buttons[switch_id].setText(f"Switch {switch_id+1} ({'ON' if current_state == 0 else 'OFF'})")
+        new_state = 1 if current_state == 0 else 0
+        pins[switch_id].write(new_state)
+
+        # Update appliance state and calculate ON duration
+        now = time.time()
+        if appliance_states[switch_id]["state"]:
+            appliance_states[switch_id]["on_duration"] += now - appliance_states[switch_id]["last_toggle_time"]
+        appliance_states[switch_id]["state"] = not appliance_states[switch_id]["state"]
+        appliance_states[switch_id]["last_toggle_time"] = now
+
+        self.switch_buttons[switch_id].setText(f"Switch {switch_id+1} ({'ON' if new_state else 'OFF'})")
 
     def update_video_feed(self):
-        global total_people, electricity_saved, automatic_mode
+        global total_people, electricity_saved, automatic_mode, appliance_states
 
         success, image = cap.read()
         if not success:
@@ -339,10 +509,17 @@ class MainWindow(QMainWindow):
         # Control appliances based on mode
         if automatic_mode:
             for i in range(4):
-                pins[i].write(0 if i in nearest_points else 1)
+                new_state = 0 if i in nearest_points else 1
+                pins[i].write(new_state)
 
-        # Calculate electricity saved (example logic)
-        self.electricity_saved += self.total_people * 0.1  # Example: 0.1 kWh per person
+                # Update appliance state and calculate ON duration
+                now = time.time()
+                if appliance_states[i]["state"]:
+                    appliance_states[i]["on_duration"] += now - appliance_states[i]["last_toggle_time"]
+                appliance_states[i]["state"] = new_state == 0
+                appliance_states[i]["last_toggle_time"] = now
+
+
 
         # Convert image to PyQt-compatible format
         h, w, ch = image.shape
@@ -351,13 +528,20 @@ class MainWindow(QMainWindow):
         self.video_label.setPixmap(QPixmap.fromImage(qt_image))
 
         # Update statistics labels
-        self.stats_label.setText(f"Total People: {self.total_people}\nElectricity Saved: {round(self.electricity_saved, 2)} kWh\nAppliances Count: {len(pins)}")
+        total_on_hours = sum(state["on_duration"] / 3600 for state in appliance_states.values())
+        # Calculate electricity saved (example logic)
+        self.electricity_saved += total_on_hours * self.cons_  # Example: 0.1 kWh per person
+        self.stats_label.setText(
+            f"Total People: {self.total_people}\n"
+            f"Electricity consumed: {round(self.electricity_saved, 2)} kWh\n"
+            f"Total Appliances Active Time: {round(total_on_hours, 2)} hours"
+        )
 
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    setup_window = SetupWindow()
-    setup_window.show()
+    window = PowerConsumptionApp()
+    window.show()
     sys.exit(app.exec_())
 
     # Release resources when the application closes
