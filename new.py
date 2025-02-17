@@ -3,7 +3,7 @@ import time
 
 import cv2
 import numpy as np
-from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QGridLayout, QFrame, QMessageBox ,QLineEdit
+from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QPushButton, QVBoxLayout, QWidget, QGridLayout, QFrame, QMessageBox ,QLineEdit,QProgressBar
 from PyQt5.QtGui import QImage, QPixmap, QFont, QLinearGradient, QColor, QBrush, QPainter
 from PyQt5.QtCore import QTimer, Qt
 from pyfirmata import Arduino
@@ -201,15 +201,15 @@ class GradientBackground(QWidget):
 
 
 class SetupWindow(QWidget):
-    def __init__(self , consumption_data):
+    def __init__(self,consumption):
         super().__init__()
         self.setWindowTitle("Setup Corner Points")
         self.setGeometry(100, 100, 800, 600)
-        self.consumption_data = consumption_data
+        self.consumption_data = consumption
 
-        #rate of consumption
-        self.cons_ = calculate(self.consumption_data[0], self.consumption_data[1], self.consumption_data[2], self.consumption_data[3])
-
+        # rate of consumption
+        self.cons_ = calculate(self.consumption_data[0], self.consumption_data[1], self.consumption_data[2],
+                               self.consumption_data[3])
 
         # Set gradient background
         self.background = GradientBackground(QColor("#f0f8ff"), QColor("#c6e2ff"), self)
@@ -224,14 +224,20 @@ class SetupWindow(QWidget):
         self.layout.addWidget(self.video_label)
 
         # Instructions Label
-        self.instructions_label = QLabel("Click on the video feed to set the 4 corner points.", self)
+        self.instructions_label = QLabel("Automatically detecting corner points...", self)
         self.instructions_label.setStyleSheet("font-size: 16px; color: #333;")
         self.instructions_label.setAlignment(Qt.AlignCenter)
         self.layout.addWidget(self.instructions_label)
 
-        # Save Button
-        self.save_button = QPushButton("Save and Proceed", self)
-        self.save_button.setStyleSheet("""
+        # Progress Bar (Loading Effect)
+        self.progress_bar = QProgressBar(self)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.layout.addWidget(self.progress_bar)
+
+        # Proceed Button
+        self.proceed_button = QPushButton("Proceed to Main Screen", self)
+        self.proceed_button.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, stop: 0 #007bff, stop: 1 #0056b3);
                 color: white;
@@ -244,25 +250,39 @@ class SetupWindow(QWidget):
                 background: qlineargradient(x1: 0, y1: 0, x2: 1, y2: 0, stop: 0 #0056b3, stop: 1 #004085);
             }
         """)
-        self.save_button.setEnabled(False)
-        self.save_button.clicked.connect(self.save_and_proceed)
-        self.layout.addWidget(self.save_button)
+        self.proceed_button.setEnabled(False)
+        self.proceed_button.clicked.connect(self.redirect_to_main_window)
+        self.layout.addWidget(self.proceed_button)
 
         # Timer for video feed updates
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_video_feed)
         self.timer.start(30)  # Update every 30ms
 
-        # Variables for point selection
+        # Variables for corner points
         self.corner_points = []
-        self.click_count = 0
+        self.is_processing = False
 
     def update_video_feed(self):
         success, image = cap.read()
         if not success:
             return
 
-        # Draw existing points on the video feed
+        if not self.is_processing:
+            # Automatically detect corner points based on resolution
+            frame_height, frame_width = image.shape[:2]
+            self.corner_points = [
+                (0, 0),  # Top-left
+                (frame_width - 1, 0),  # Top-right
+                (0, frame_height - 1),  # Bottom-left
+                (frame_width - 1, frame_height - 1)  # Bottom-right
+            ]
+            self.is_processing = True
+
+            # Simulate loading effect
+            self.simulate_loading()
+
+        # Draw corner points on the video feed
         for point in self.corner_points:
             cv2.circle(image, point, 10, (0, 255, 0), -1)
 
@@ -272,32 +292,30 @@ class SetupWindow(QWidget):
         qt_image = QImage(image.data, w, h, bytes_per_line, QImage.Format_BGR888)
         self.video_label.setPixmap(QPixmap.fromImage(qt_image))
 
-    def mousePressEvent(self, event):
-        if len(self.corner_points) < 4:
-            x, y = event.pos().x(), event.pos().y()
+    def simulate_loading(self):
+        # Simulate loading by incrementing the progress bar
+        self.instructions_label.setText("Detecting corner points...")
+        self.progress_value = 0
+        self.loading_timer = QTimer(self)
+        self.loading_timer.timeout.connect(self.increment_progress)
+        self.loading_timer.start(30)
 
-            # Map the click position to the video resolution
-            video_width = self.video_label.width()
-            video_height = self.video_label.height()
-            frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            mapped_x = int(x / video_width * frame_width)
-            mapped_y = int(y / video_height * frame_height)
+    def increment_progress(self):
+        if self.progress_value < 100:
+            self.progress_value += 1
+            self.progress_bar.setValue(self.progress_value)
+        else:
+            self.loading_timer.stop()
+            self.instructions_label.setText("Corner points detected! Click 'Proceed to Main Screen'.")
+            self.proceed_button.setEnabled(True)
 
-            self.corner_points.append((mapped_x, mapped_y))
-            self.click_count += 1
-
-            if self.click_count == 4:
-                self.save_button.setEnabled(True)
-                self.instructions_label.setText("All 4 points set! Click 'Save and Proceed'.")
-
-    def save_and_proceed(self):
-        global corner_points , cons_
+    def redirect_to_main_window(self):
+        global corner_points, cons_
         corner_points = self.corner_points
-        cons_  = self.cons_
+        cons_ = self.cons_
         self.close()
 
-        self.main_window = MainWindow(corner_points , cons_)
+        self.main_window = MainWindow(corner_points, cons_)
         self.main_window.show()
 
 
